@@ -67,18 +67,21 @@ pip install -e ".[training]"     # peft, datasets, soundfile, indic-nlp-library,
 # !pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 ```
 
-## Datasets (open, for Indian-language TTS)
+## Datasets (open, for Telugu TTS)
 
-Blend studio-quality (voice) + multi-speaker (robustness) + conversational
-(code-switching):
-- **Studio / TTS-grade:** IIT-Madras **IndicTTS** (incl. Telugu), **SYSPIN**
-  (incl. Telugu, CC-BY-4.0), AI4Bharat **Rasa**.
-- **Large multi-speaker:** **IndicVoices-R** (`ai4bharat/indicvoices_r`, te),
-  Google **OpenSLR SLR66** (Telugu).
-- **Code-switching:** **IndicVoices** conversational/extempore; MUCS-style mixed data.
-- **Crowd (robustness):** Mozilla **Common Voice** (te), AI4Bharat **Shrutilipi**.
+**Ungated — work out of the box** (no login/approval):
+| Dataset | How | Size / quality |
+|---|---|---|
+| `google/fleurs` (`te_in`) | `hf` loader | ~5 h, 16 kHz, read speech — **smoke test** |
+| OpenSLR **SLR66** (Telugu) | `openslr` loader (`--slr-id 66`) | ~5 h, 16 kHz, crowdsourced, male+female |
+| `ai4bharat/indicvoices_r` (`Telugu`) | `hf` loader | ~100 h, 48 kHz, multi-speaker — **scale** (large ~86 GB; subset/Colab) |
 
-> Several corpora are research-only; the fine-tuned weights inherit those terms.
+**Gated / manual** (need login or a license request; for higher quality later):
+- `SPRINGLab/IndicTTS_Telugu` — IIT-M studio, 2 speakers, ~8.7 h, 48 kHz (accept license on HF).
+- **IIT-Madras IndicTTS** full corpus — research request; use the `ljspeech` loader once downloaded.
+- Mozilla **Common Voice** (te) — moved to the Mozilla Data Collective (login required).
+
+> Fine-tuned weights inherit their **training-data** license — verify before publishing.
 
 ---
 
@@ -89,9 +92,13 @@ A quick smoke test to confirm the loop runs and the loss falls, on a handful of 
 ```bash
 CFG=training/configs/telugu.yaml
 
-# 1) Manifest (run once per source; --append for more). Example: a studio corpus.
-python -m training.prepare_data --config $CFG --source-type ljspeech \
-    --audio-dir /data/indictts/te/wav --metadata /data/indictts/te/metadata.txt --speaker indictts_f
+# 1) Manifest — auto-downloads an ungated Telugu set (no local data needed).
+#    google/fleurs (te_in): ~5h read speech, 16 kHz, CC-BY-4.0.
+python -m training.prepare_data --config $CFG --source-type hf \
+    --hf-dataset google/fleurs --hf-config te_in --hf-split train \
+    --text-col transcription --audio-col audio --speaker fleurs
+# (alt, also ungated, auto-downloads + extracts a cleaner OpenSLR Telugu corpus:)
+#   python -m training.prepare_data --config $CFG --source-type openslr --slr-id 66
 
 # 2) Extend the tokenizer with the Telugu script + [te] tag
 python -m training.extend_tokenizer --config $CFG
@@ -125,9 +132,12 @@ export DEVICE=cuda PRECISION=fp16 MAX_STEPS=40000 \
        WORK_DIR=/content/drive/MyDrive/chatterbox_runs
 CFG=training/configs/telugu.yaml
 
+# ai4bharat/indicvoices_r is ungated, ~100h Telugu @ 48 kHz (large ~86 GB) — note the
+# config is "Telugu" (capitalized) and text/speaker columns are text/speaker_id.
+# Subset for a first run by slicing the split, e.g. --hf-split "train[:5000]".
 python -m training.prepare_data        --config $CFG --source-type hf \
-    --hf-dataset ai4bharat/indicvoices_r --hf-config te --hf-split train \
-    --text-col text --audio-col audio --speaker-col speaker
+    --hf-dataset ai4bharat/indicvoices_r --hf-config Telugu --hf-split "train[:5000]" \
+    --text-col text --audio-col audio --speaker-col speaker_id
 python -m training.extend_tokenizer    --config $CFG
 python -m training.precompute_features --config $CFG          # CUDA handles torch.stft fine
 python -m training.train               --config $CFG

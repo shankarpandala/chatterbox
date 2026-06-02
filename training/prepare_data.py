@@ -6,18 +6,25 @@ Reads one source at a time and appends rows to ``paths.manifest`` (JSONL), each:
 
 Supported ``--source-type`` values:
 
+  hf       : a HuggingFace `datasets` dataset (audio decoded to wav under work_dir).
+             Ungated + works out-of-the-box: google/fleurs (te_in) for a smoke test,
+             ai4bharat/indicvoices_r (config Telugu) for scale.
+  openslr  : auto-download + extract an OpenSLR set by id (e.g. 66 = Telugu) and
+             parse its line_index.tsv. Ungated, CC-BY-SA-4.0, Mac-friendly size.
   ljspeech : a metadata file ("id<sep>text" or "id<sep>text<sep>speaker") + audio dir
-             (covers LJSpeech, IIT-Madras IndicTTS, most studio corpora)
+             (covers LJSpeech, IIT-Madras IndicTTS, most local studio corpora)
   csv      : a CSV with header; choose the audio/text/speaker columns
-  hf       : a HuggingFace `datasets` dataset (audio decoded to wav under work_dir)
 
-Run once per source (use --append for the 2nd, 3rd, ... source). Example mix for
-a Telugu pilot: IIT-M IndicTTS (ljspeech) + OpenSLR SLR66 (csv) + IndicVoices-R
-(hf) + IndicVoices conversational code-switch (hf or ljspeech).
+Run once per source (use --append for the 2nd, 3rd, ... source). Examples:
 
+    # Ungated, auto-downloads — unblocks a Mac smoke test with no local data:
     python -m training.prepare_data --config training/configs/telugu.yaml \
-        --source-type ljspeech --audio-dir /data/indictts/te/wav \
-        --metadata /data/indictts/te/txt.done.data --speaker indictts_f
+        --source-type hf --hf-dataset google/fleurs --hf-config te_in \
+        --hf-split train --text-col transcription --audio-col audio --speaker fleurs
+
+    # Ungated OpenSLR Telugu (downloads + extracts SLR66):
+    python -m training.prepare_data --config training/configs/telugu.yaml \
+        --source-type openslr --slr-id 66
 """
 from __future__ import annotations
 
@@ -25,6 +32,8 @@ import argparse
 import csv
 import json
 import os
+import urllib.request
+import zipfile
 from pathlib import Path
 
 from training.common import load_config
@@ -94,7 +103,15 @@ def _from_hf(args, cfg):
 
     cache_dir = Path(cfg.paths.work_dir) / "audio_cache" / (args.hf_config or "default")
     cache_dir.mkdir(parents=True, exist_ok=True)
-    ds = load_dataset(args.hf_dataset, args.hf_config, split=args.hf_split)
+    try:
+        ds = load_dataset(args.hf_dataset, args.hf_config, split=args.hf_split)
+    except Exception as e:
+        # Some datasets (e.g. google/fleurs on older `datasets`) need this; newer
+        # `datasets` removed the kwarg, so only retry with it when asked for.
+        if "trust_remote_code" in str(e):
+            ds = load_dataset(args.hf_dataset, args.hf_config, split=args.hf_split, trust_remote_code=True)
+        else:
+            raise
     for i, ex in enumerate(ds):
         audio = ex[args.audio_col]
         if isinstance(audio, dict) and "array" in audio:  # decoded audio
@@ -108,10 +125,77 @@ def _from_hf(args, cfg):
         yield audio_path, ex[args.text_col], speaker
 
 
+# OpenSLR crowdsourced high-quality Indic sets (ungated, CC-BY-SA-4.0). Each entry:
+#   slr_id: [(audio_zip, line_index_tsv, speaker_label), ...]
+# The line-index TSVs are separate downloads from the zips and map: FileID<TAB>text.
+OPENSLR_SETS = {
+    66: [  # Telugu
+        ("te_in_female.zip", "line_index_female.tsv", "slr66_f"),
+        ("te_in_male.zip", "line_index_male.tsv", "slr66_m"),
+    ],
+    65: [  # Tamil
+        ("ta_in_female.zip", "line_index_female.tsv", "slr65_f"),
+        ("ta_in_male.zip", "line_index_male.tsv", "slr65_m"),
+    ],
+    64: [("mr_in_female.zip", "line_index.tsv", "slr64_f")],  # Marathi (female only)
+    63: [  # Malayalam
+        ("ml_in_female.zip", "line_index_female.tsv", "slr63_f"),
+        ("ml_in_male.zip", "line_index_male.tsv", "slr63_m"),
+    ],
+}
+OPENSLR_MIRRORS = ("https://www.openslr.org/resources", "https://us.openslr.org/resources")
+
+
+def _download(url_paths, dest: Path):
+    """Download the first reachable mirror URL to dest (skip if already present)."""
+    if dest.exists() and dest.stat().st_size > 0:
+        print(f"[prepare_data] cached {dest.name}")
+        return
+    last_err = None
+    for url in url_paths:
+        try:
+            print(f"[prepare_data] downloading {url}")
+            urllib.request.urlretrieve(url, dest)
+            return
+        except Exception as e:  # try the next mirror
+            last_err = e
+    raise SystemExit(f"Failed to download {dest.name}: {last_err}")
+
+
+def _from_openslr(args, cfg):
+    slr = int(args.slr_id)
+    if slr not in OPENSLR_SETS:
+        raise SystemExit(f"OpenSLR set {slr} not configured. Known: {sorted(OPENSLR_SETS)}")
+    root = Path(cfg.paths.work_dir) / "openslr" / f"SLR{slr}"
+    root.mkdir(parents=True, exist_ok=True)
+
+    for zip_name, idx_name, speaker in OPENSLR_SETS[slr]:
+        zip_path, idx_path = root / zip_name, root / f"{speaker}_{idx_name}"
+        _download([f"{m}/{slr}/{zip_name}" for m in OPENSLR_MIRRORS], zip_path)
+        _download([f"{m}/{slr}/{idx_name}" for m in OPENSLR_MIRRORS], idx_path)
+
+        wav_dir = root / zip_name[:-4]
+        if not wav_dir.exists():
+            with zipfile.ZipFile(zip_path) as z:
+                z.extractall(wav_dir)
+        # Map FileID -> wav path (files may sit in a nested folder inside the zip).
+        wavs = {p.stem: p for p in wav_dir.rglob("*.wav")}
+
+        with open(idx_path, encoding="utf-8") as f:
+            for line in f:
+                cols = line.rstrip("\n").split("\t")
+                if len(cols) < 2:
+                    continue
+                fid, text = cols[0].strip(), cols[1].strip()
+                wav = wavs.get(fid) or wavs.get(Path(fid).stem)
+                if wav is not None:
+                    yield str(wav), text, speaker
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", required=True)
-    p.add_argument("--source-type", required=True, choices=["ljspeech", "csv", "hf"])
+    p.add_argument("--source-type", required=True, choices=["ljspeech", "csv", "hf", "openslr"])
     p.add_argument("--append", action="store_true", help="append to an existing manifest")
     p.add_argument("--speaker", default="spk0", help="default speaker id for the source")
     # ljspeech / csv
@@ -128,6 +212,8 @@ def main():
     p.add_argument("--hf-dataset", default=None)
     p.add_argument("--hf-config", default=None)
     p.add_argument("--hf-split", default="train")
+    # openslr
+    p.add_argument("--slr-id", type=int, default=None, help="OpenSLR set id, e.g. 66 (Telugu)")
     args = p.parse_args()
 
     cfg = load_config(args.config)
@@ -144,6 +230,9 @@ def main():
     elif args.source_type == "csv":
         assert args.csv, "csv needs --csv"
         rows = _from_csv(args)
+    elif args.source_type == "openslr":
+        assert args.slr_id, "openslr needs --slr-id (e.g. 66 for Telugu)"
+        rows = _from_openslr(args, cfg)
     else:
         assert args.hf_dataset, "hf needs --hf-dataset"
         rows = _from_hf(args, cfg)
