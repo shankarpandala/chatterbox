@@ -83,6 +83,24 @@ pip install -e ".[training]"     # peft, datasets, soundfile, indic-nlp-library,
 
 > Fine-tuned weights inherit their **training-data** license — verify before publishing.
 
+## Train on ALL sources at once
+
+Each language config has a `sources:` list (Telugu ships with FLEURS + OpenSLR SLR66 +
+IndicVoices-R). Pull **every** source into one combined manifest with a single command:
+
+```bash
+python -m training.prepare_data --config $CFG --all
+```
+
+Then run the rest of the pipeline unchanged — **training automatically uses the whole
+combined manifest** (precompute reads every row; train reads every cached feature). So
+"download from all sources" + "train on all of them" is just `--all` followed by the
+normal steps. Adding the next language = edit that config's `sources:` list (different
+ISO ids per source: `fleurs ta_in`, OpenSLR `65`, IndicVoices-R `Tamil`, …).
+
+> `--all` includes IndicVoices-R (~86 GB); the config slices it to `train[:5000]` so a
+> Mac run stays sane — raise/remove the slice on Colab for the full set.
+
 ---
 
 ## Workflow A — Prove on your Mac (do this first)
@@ -92,13 +110,10 @@ A quick smoke test to confirm the loop runs and the loss falls, on a handful of 
 ```bash
 CFG=training/configs/telugu.yaml
 
-# 1) Manifest — auto-downloads an ungated Telugu set (no local data needed).
-#    google/fleurs (te_in): ~5h read speech, 16 kHz, CC-BY-4.0.
+# 1) Manifest. For a quick smoke test, one small ungated set is enough:
 python -m training.prepare_data --config $CFG --source-type hf \
     --hf-dataset google/fleurs --hf-config te_in --hf-split train \
     --text-col transcription --audio-col audio --speaker fleurs
-# (alt, also ungated, auto-downloads + extracts a cleaner OpenSLR Telugu corpus:)
-#   python -m training.prepare_data --config $CFG --source-type openslr --slr-id 66
 
 # 2) Extend the tokenizer with the Telugu script + [te] tag
 python -m training.extend_tokenizer --config $CFG

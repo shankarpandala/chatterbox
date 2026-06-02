@@ -35,6 +35,29 @@ paths:
 precompute:
   reference: other_same_speaker
 
+# All open Telugu sources, pulled together by:  prepare_data --config <cfg> --all
+# Each entry maps to one prepare_data source loader. When adding a NEW language,
+# update this list (different ISO ids: fleurs ta_in, OpenSLR 65, IndicVoices-R Tamil, …).
+# All three below are UNGATED. IndicVoices-R is large (~86 GB) — the split slice keeps
+# the Mac run sane; raise/remove `[:5000]` on Colab for the full set.
+sources:
+  - type: hf            # FLEURS Telugu — ~5h read speech, 16 kHz
+    hf_dataset: google/fleurs
+    hf_config: te_in
+    hf_split: train
+    text_col: transcription
+    audio_col: audio
+    speaker: fleurs
+  - type: openslr       # OpenSLR SLR66 Telugu — crowdsourced, male+female
+    slr_id: 66
+  - type: hf            # IndicVoices-R Telugu — large, 48 kHz, multi-speaker
+    hf_dataset: ai4bharat/indicvoices_r
+    hf_config: Telugu
+    hf_split: "train[:5000]"
+    text_col: text
+    audio_col: audio
+    speaker_col: speaker_id
+
 train:
   batch_size: 1                         # keep 1 (T3.forward has no attention mask)
   grad_accum: 16                        # effective batch = batch_size * grad_accum
