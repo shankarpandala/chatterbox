@@ -15,16 +15,17 @@ Supported ``--source-type`` values:
              (covers LJSpeech, IIT-Madras IndicTTS, most local studio corpora)
   csv      : a CSV with header; choose the audio/text/speaker columns
 
-Run once per source (use --append for the 2nd, 3rd, ... source). Examples:
+Examples:
 
-    # Ungated, auto-downloads — unblocks a Mac smoke test with no local data:
+    # Pull EVERY source listed under `sources:` in the config into one manifest:
+    python -m training.prepare_data --config training/configs/telugu.yaml --all
+
+    # ...or one source at a time (use --append to add to an existing manifest):
     python -m training.prepare_data --config training/configs/telugu.yaml \
         --source-type hf --hf-dataset google/fleurs --hf-config te_in \
         --hf-split train --text-col transcription --audio-col audio --speaker fleurs
-
-    # Ungated OpenSLR Telugu (downloads + extracts SLR66):
     python -m training.prepare_data --config training/configs/telugu.yaml \
-        --source-type openslr --slr-id 66
+        --append --source-type openslr --slr-id 66
 """
 from __future__ import annotations
 
@@ -192,10 +193,45 @@ def _from_openslr(args, cfg):
                     yield str(wav), text, speaker
 
 
+def _dispatch_rows(a, cfg):
+    """Return a row generator for a single source described by namespace ``a``."""
+    if a.source_type == "ljspeech":
+        assert a.audio_dir and a.metadata, "ljspeech source needs audio_dir + metadata"
+        return _from_ljspeech(a)
+    if a.source_type == "csv":
+        assert a.csv, "csv source needs `csv`"
+        return _from_csv(a)
+    if a.source_type == "openslr":
+        assert a.slr_id, "openslr source needs slr_id (e.g. 66 for Telugu)"
+        return _from_openslr(a, cfg)
+    if a.source_type == "hf":
+        assert a.hf_dataset, "hf source needs hf_dataset"
+        return _from_hf(a, cfg)
+    raise SystemExit(f"Unknown source type: {a.source_type!r}")
+
+
+def _source_namespace(src: dict):
+    """Build an args-like namespace (matching the CLI attrs) from a config source dict."""
+    import types
+
+    d = dict(src)
+    d.setdefault("source_type", d.pop("type", None))
+    base = dict(
+        source_type=None, speaker="spk0", audio_dir=None, metadata=None, ext=".wav",
+        sep="|", csv=None, audio_col="audio", text_col="text", speaker_col=None,
+        hf_dataset=None, hf_config=None, hf_split="train", slr_id=None,
+    )
+    base.update(d)
+    return types.SimpleNamespace(**base)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", required=True)
-    p.add_argument("--source-type", required=True, choices=["ljspeech", "csv", "hf", "openslr"])
+    p.add_argument("--source-type", default=None, choices=["ljspeech", "csv", "hf", "openslr"],
+                   help="single source; omit and use --all to pull every source in the config")
+    p.add_argument("--all", action="store_true",
+                   help="download EVERY source listed under `sources:` in the config into one manifest")
     p.add_argument("--append", action="store_true", help="append to an existing manifest")
     p.add_argument("--speaker", default="spk0", help="default speaker id for the source")
     # ljspeech / csv
@@ -220,24 +256,32 @@ def main():
     manifest = Path(cfg.paths.manifest)
     if manifest.exists() and not args.append:
         raise SystemExit(
-            f"{manifest} already exists. Pass --append to add another source, "
-            f"or delete it to start fresh."
+            f"{manifest} already exists. Pass --append to add to it, or delete it to start fresh."
         )
 
-    if args.source_type == "ljspeech":
-        assert args.audio_dir and args.metadata, "ljspeech needs --audio-dir and --metadata"
-        rows = _from_ljspeech(args)
-    elif args.source_type == "csv":
-        assert args.csv, "csv needs --csv"
-        rows = _from_csv(args)
-    elif args.source_type == "openslr":
-        assert args.slr_id, "openslr needs --slr-id (e.g. 66 for Telugu)"
-        rows = _from_openslr(args, cfg)
-    else:
-        assert args.hf_dataset, "hf needs --hf-dataset"
-        rows = _from_hf(args, cfg)
+    if args.all:
+        # Pull every source listed in the config into one combined manifest.
+        from omegaconf import OmegaConf
 
-    kept = _append_rows(manifest, rows, cfg.language)
+        sources = cfg.get("sources")
+        if not sources:
+            raise SystemExit("--all requires a `sources:` list in the config.")
+        grand = 0
+        for i, src_cfg in enumerate(sources):
+            a = _source_namespace(OmegaConf.to_container(src_cfg, resolve=True))
+            label = a.hf_dataset or (f"SLR{a.slr_id}" if a.slr_id else a.source_type)
+            print(f"[prepare_data] source {i + 1}/{len(sources)}: {a.source_type} ({label})")
+            kept = _append_rows(manifest, _dispatch_rows(a, cfg), cfg.language)
+            grand += kept
+            print(f"[prepare_data]   +{kept} utterances")
+        total = sum(1 for _ in open(manifest, encoding="utf-8"))
+        print(f"[prepare_data] ALL sources done: added {grand}; manifest now {total} rows -> {manifest}")
+        return
+
+    if not args.source_type:
+        raise SystemExit("Pass --source-type <ljspeech|csv|hf|openslr>, or --all to use the config's `sources:`.")
+
+    kept = _append_rows(manifest, _dispatch_rows(args, cfg), cfg.language)
     total = sum(1 for _ in open(manifest, encoding="utf-8"))
     print(f"[prepare_data] added {kept} utterances from {args.source_type}. Manifest now: {total} rows -> {manifest}")
 
