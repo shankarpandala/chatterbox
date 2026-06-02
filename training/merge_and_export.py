@@ -10,7 +10,7 @@ embedding/head (or loads the full fine-tune), and writes a directory that
       ve.pt  s3gen.pt  conds.pt             # reused, language-agnostic
       config.json  README.md               # metadata + model card
 
-    python -m training.merge_and_export --config training/configs/tamil.yaml
+    python -m training.merge_and_export --config training/configs/telugu.yaml
 """
 from __future__ import annotations
 

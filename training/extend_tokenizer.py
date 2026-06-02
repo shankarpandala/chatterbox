@@ -9,7 +9,7 @@ New tokens are appended, so every original token id is preserved -> the warm
 start in train.py can copy the pretrained embedding rows 1:1 and only the new
 rows are learned.
 
-    python -m training.extend_tokenizer --config training/configs/tamil.yaml
+    python -m training.extend_tokenizer --config training/configs/telugu.yaml
 """
 from __future__ import annotations
 

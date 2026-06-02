@@ -1,14 +1,17 @@
 # Adding Indian languages to Chatterbox (fine-tuning pipeline)
 
-This package fine-tunes **Chatterbox-Multilingual** for a new language — one at a
-time — on a single **Apple-Silicon Mac (MPS, 24 GB)**, with first-class support
-for **code-switched** speech (Indian conversational speech mixes a lot of
-English: "Hinglish", "Tanglish", …). The pilot config targets **Tamil (`ta`)**;
-copy it to add the next language.
+Fine-tune **Chatterbox-Multilingual** for a new language — one at a time — with
+first-class **code-switching** (Indian conversational speech mixes a lot of
+English: "Tenglish", "Hinglish", …). The pilot targets **Telugu (`te`)**.
 
-## How it works (and why it fits in 24 GB)
+**One parametrized config, two platforms:**
+- **Prove on your Mac first** (Apple-Silicon / MPS) — small smoke run.
+- **Scale on Google Colab (T4 GPU)** — same commands, same config, switched with
+  env vars.
 
-Chatterbox has four parts. Only the text side is language-specific:
+## How it works (and why it fits a 24 GB Mac / a free T4)
+
+Only the text side is language-specific:
 
 | Component | Role | Here |
 |---|---|---|
@@ -17,128 +20,114 @@ Chatterbox has four parts. Only the text side is language-specific:
 | **S3Gen** + **HiFi-GAN** | speech tokens → waveform | **reused frozen** (acoustic) |
 | **VoiceEncoder** + **S3Tokenizer** | speaker emb; wav → tokens | **reused frozen** (acoustic) |
 
-Two design choices make it run on a Mac:
-1. **Warm start** from the released 23-language checkpoint → English stays intact
-   (so code-switching works) and you get cross-lingual transfer.
-2. **Pre-compute acoustic features once** (`precompute_features.py`), then training
-   loads *only* T3. With **LoRA**, trainable params are a few M and it fits in
-   well under 12 GB.
+1. **Warm-start** from the released 23-language checkpoint → English stays intact
+   (code-switching works) + cross-lingual transfer.
+2. **Pre-compute acoustic features once** → training loads *only* T3; with **LoRA**
+   it fits in well under 12 GB (Mac) and easily on a T4.
 
-> **Honest expectation.** A 24 GB Mac is great for LoRA fine-tunes on tens-to-low
-> hundreds of hours and will give natural, code-switch-capable speech. Matching
-> Chatterbox's *English* SOTA (trained on ~hundreds of thousands of hours across
-> many GPUs) is **not** achievable on one Mac. The same configs run on a cloud
-> GPU later — set `device: cuda`, raise `lora.rank`/data, and (optionally) switch
-> to a full fine-tune — to push toward native quality.
+> A 24 GB Mac / free T4 gives natural, code-switch-capable LoRA fine-tunes.
+> Matching Chatterbox's *English* SOTA needs far more data/compute.
 
-## Platforms
+## One config, env-driven platforms
 
-**Mac (Apple-Silicon / MPS) is the primary target — get it working here first.**
-**Google Colab (CUDA)** is for heavier/longer runs. Every step works on both; the
-only difference is the **config file** you pass:
+`configs/telugu.yaml` is fully parametrized. **All paths derive from `language`**,
+and Mac/Colab differences are env vars — no file edits to switch platform:
 
-| Platform | Config | Notes |
-|---|---|---|
-| Mac (MPS) | `training/configs/tamil.yaml` | `device: mps`, `precision: fp32` |
-| Colab (CUDA) | `training/configs/tamil_colab.yaml` | `device: cuda`, `precision: fp16` (bf16 on A100/L4), longer schedule |
+| Env var | Default (Mac) | Colab T4 | Effect |
+|---|---|---|---|
+| `DEVICE` | `mps` | `cuda` | compute device |
+| `PRECISION` | `fp32` | `fp16` | mixed precision (bf16 on A100/L4) |
+| `MAX_STEPS` | `20000` | `40000` | training length (`200` for a Mac smoke test) |
+| `WORK_DIR` | `./runs` | a Drive path | where all artifacts go (`$WORK_DIR/<language>`) |
+
+## Add the NEXT language (1 by 1)
+
+Copy the config and change **only the language fields** — every path follows
+automatically:
+
+```bash
+cp training/configs/telugu.yaml training/configs/marathi.yaml
+# edit marathi.yaml:  language: mr  |  language_name: Marathi  |  eval_sentences: (Marathi)
+# then run the exact same steps with --config training/configs/marathi.yaml
+```
 
 ## Install
 
 **Mac:**
 ```bash
-pip install -e ".[training]"     # adds peft, datasets, soundfile, indic-nlp-library, huggingface_hub
+pip install -e ".[training]"     # peft, datasets, soundfile, indic-nlp-library, huggingface_hub
 ```
 
-**Google Colab** (run in a cell; `!` shells out):
+**Google Colab** (Runtime → Change runtime type → **T4 GPU**):
 ```python
 !git clone https://github.com/shankarpandala/chatterbox.git
 %cd chatterbox
 !pip install -e ".[training]"
-# Colab ships a CUDA torch; the install may re-pin torch. If CUDA breaks afterwards,
-# reinstall a CUDA build, e.g.:  !pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+# Colab ships a CUDA torch; if the install re-pins it and CUDA breaks, reinstall:
+# !pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 ```
 
 ## Datasets (open, for Indian-language TTS)
 
-Blend studio-quality (voice quality) + multi-speaker (robustness) + conversational
-(code-switching). Highlights:
+Blend studio-quality (voice) + multi-speaker (robustness) + conversational
+(code-switching):
+- **Studio / TTS-grade:** IIT-Madras **IndicTTS** (incl. Telugu), **SYSPIN**
+  (incl. Telugu, CC-BY-4.0), AI4Bharat **Rasa**.
+- **Large multi-speaker:** **IndicVoices-R** (`ai4bharat/indicvoices_r`, te),
+  Google **OpenSLR SLR66** (Telugu).
+- **Code-switching:** **IndicVoices** conversational/extempore; MUCS-style mixed data.
+- **Crowd (robustness):** Mozilla **Common Voice** (te), AI4Bharat **Shrutilipi**.
 
-- **Studio / TTS-grade:** IIT-Madras **IndicTTS** (13 langs, studio), **SYSPIN**
-  (9 langs, CC-BY-4.0), AI4Bharat **Rasa** (expressive).
-- **Large multi-speaker:** **IndicVoices-R** (`ai4bharat/indicvoices_r`, ~1700 h,
-  22 langs), Google **OpenSLR** HQ sets (Tamil SLR65, Telugu SLR66, …).
-- **Code-switching:** **OpenSLR MUCS-2021** (Hindi-English / Bengali-English
-  subsets), **IndicVoices** conversational/extempore.
-- **Crowd (robustness):** Mozilla **Common Voice** (Indic), AI4Bharat **Shrutilipi**.
+> Several corpora are research-only; the fine-tuned weights inherit those terms.
 
-Tamil pilot suggestion: IIT-M IndicTTS Tamil + OpenSLR SLR65 + IndicVoices-R Tamil
-+ IndicVoices conversational / MUCS for "Tanglish". Start with ~20–50 h, expand.
+---
 
-> **Licensing:** several corpora are research-only. The fine-tuned weights inherit
-> those terms — verify before publishing (see the upload step).
+## Workflow A — Prove on your Mac (do this first)
 
-## Pipeline (run from the repo root)
-
-The commands are identical on both platforms — only `CFG` changes:
+A quick smoke test to confirm the loop runs and the loss falls, on a handful of clips.
 
 ```bash
-CFG=training/configs/tamil.yaml         # Mac (MPS)
-# CFG=training/configs/tamil_colab.yaml # Google Colab (CUDA)
+CFG=training/configs/telugu.yaml
 
-# 1) Build the manifest (run once per source, --append for the 2nd, 3rd, …)
+# 1) Manifest (run once per source; --append for more). Example: a studio corpus.
 python -m training.prepare_data --config $CFG --source-type ljspeech \
-    --audio-dir /data/indictts/ta/wav --metadata /data/indictts/ta/metadata.txt --speaker indictts_f
-python -m training.prepare_data --config $CFG --append --source-type hf \
-    --hf-dataset ai4bharat/indicvoices_r --hf-config ta --hf-split train \
-    --text-col text --audio-col audio --speaker-col speaker
+    --audio-dir /data/indictts/te/wav --metadata /data/indictts/te/metadata.txt --speaker indictts_f
 
-# 2) Extend the tokenizer with the new script + [ta] tag
+# 2) Extend the tokenizer with the Telugu script + [te] tag
 python -m training.extend_tokenizer --config $CFG
 
-# 3) Pre-compute features (one-time; add --device cpu if MPS torch.stft errors)
-python -m training.precompute_features --config $CFG
+# 3) Pre-compute features for just 50 clips (CPU avoids MPS torch.stft quirks)
+python -m training.precompute_features --config $CFG --device cpu --limit 50
 
-# 4) Fine-tune (resumes nothing; checkpoints land in runs/tamil/checkpoints)
-python -m training.train --config $CFG
+# 4) Short training run (override just the step count)
+MAX_STEPS=200 python -m training.train --config $CFG
 
-# 5) Merge LoRA + export a loadable model dir (runs/tamil/export)
+# 5) Export + 6) listen — confirm it speaks Telugu (+ code-switch)
 python -m training.merge_and_export --config $CFG
-
-# 6) Listen + score (pure-script and code-switched eval sentences)
 python -m training.evaluate --config $CFG --ref reference_voice.wav
 ```
 
-Use it from Python:
+Watch the `speech` loss drop in step 4. Once that works, scale up.
+
+## Workflow B — Scale on Google Colab (T4)
+
+Same commands; set env vars once. Persist to Drive so a disconnect doesn't lose work.
 
 ```python
-from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-import torchaudio as ta
-
-model = ChatterboxMultilingualTTS.from_local("runs/tamil/export", device="mps", t3_model="t3_mtl_ta.safetensors")
-wav = model.generate("நான் office போறேன், meeting இருக்கு.", language_id="ta", audio_prompt_path="reference_voice.wav")
-ta.save("out.wav", wav, model.sr)   # use device="cuda" on Colab
-```
-
-## Google Colab (CUDA) quickstart
-
-Runtime → Change runtime type → **GPU**. Then, in cells:
-
-```python
-# 1) Setup
-!nvidia-smi -L                                  # check your GPU (T4 -> fp16, A100/L4 -> bf16)
-!git clone https://github.com/shankarpandala/chatterbox.git
-%cd chatterbox
-!pip install -e ".[training]"
-
-# 2) Persist outputs across disconnects (recommended) + HF auth
+# In a Colab cell:
+!nvidia-smi -L                                   # confirm a T4
 from google.colab import drive; drive.mount('/content/drive')
-from huggingface_hub import login; login()      # paste a token (or set HF_TOKEN)
-# Edit training/configs/tamil_colab.yaml -> paths.work_dir: /content/drive/MyDrive/chatterbox_runs/tamil
+from huggingface_hub import login; login()        # paste a token (or set HF_TOKEN)
 ```
 ```bash
-# 3) Same pipeline, Colab config
-CFG=training/configs/tamil_colab.yaml
-python -m training.prepare_data        --config $CFG --source-type hf --hf-dataset ai4bharat/indicvoices_r --hf-config ta --hf-split train --text-col text --audio-col audio --speaker-col speaker
+# Point the whole run at the T4 + Drive, with a full schedule — no config edits:
+export DEVICE=cuda PRECISION=fp16 MAX_STEPS=40000 \
+       WORK_DIR=/content/drive/MyDrive/chatterbox_runs
+CFG=training/configs/telugu.yaml
+
+python -m training.prepare_data        --config $CFG --source-type hf \
+    --hf-dataset ai4bharat/indicvoices_r --hf-config te --hf-split train \
+    --text-col text --audio-col audio --speaker-col speaker
 python -m training.extend_tokenizer    --config $CFG
 python -m training.precompute_features --config $CFG          # CUDA handles torch.stft fine
 python -m training.train               --config $CFG
@@ -146,43 +135,40 @@ python -m training.merge_and_export    --config $CFG
 python -m training.evaluate            --config $CFG --ref reference_voice.wav
 ```
 
-On an A100/L4, switch `precision: bf16` in the Colab config for better stability.
-The recommended workflow: **prove the loop on your Mac first** (a few clips, small
-`max_steps`), then run the full-scale training on Colab.
+(On an A100/L4 instead of a T4, use `PRECISION=bf16` for better stability.)
+
+## Use it from Python
+
+```python
+from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+import torchaudio as ta
+
+# device="mps" on Mac, "cuda" on Colab
+model = ChatterboxMultilingualTTS.from_local("runs/te/export", device="mps", t3_model="t3_mtl_te.safetensors")
+wav = model.generate("నేను office కి వెళ్తున్నాను, meeting ఉంది.", language_id="te", audio_prompt_path="reference_voice.wav")
+ta.save("out.wav", wav, model.sr)
+```
 
 ## Upload to HuggingFace
 
 ```bash
-huggingface-cli login                      # or: export HF_TOKEN=hf_xxx
-# set upload.repo_id in the config, or pass --repo-id:
-python -m training.push_to_hub --config $CFG --repo-id your-username/chatterbox-tamil
+huggingface-cli login        # or: export HF_TOKEN=hf_xxx
+python -m training.push_to_hub --config $CFG --repo-id your-username/chatterbox-telugu
 ```
 
-`merge_and_export` already wrote a model card (`export/README.md`) with usage and a
-licensing notice. Repos default to **private** (`upload.private: true`) — flip it
-only after confirming your data licenses allow redistribution.
-
-## Add the NEXT language (1 by 1)
-
-```bash
-cp training/configs/tamil.yaml training/configs/telugu.yaml   # edit language: te, paths, eval_sentences
-# then rerun steps 1–6 with --config training/configs/telugu.yaml
-```
+`merge_and_export` already wrote a model card (`export/README.md`). Repos default
+to **private** — flip only after confirming your data licenses allow redistribution.
 
 ## Tips & troubleshooting
 
-- **Quality first:** clean, single-speaker studio data drives voice quality; add
+- **Quality first:** clean single-speaker studio data drives voice quality; add
   multi-speaker + conversational data for robustness and code-switching.
-- **Code-switching:** include code-mixed utterances in the manifest; the warm
-  start already knows English and Latin tokens are preserved, so the model mainly
-  learns the *transitions*. Test with mixed eval sentences (in the config).
-- **MPS memory:** keep `batch_size: 1` and use `grad_accum` for effective batch.
-  If you hit memory pressure, lower `max_audio_seconds` or `lora.rank`.
-- **MPS precision:** `fp32` is the robust default. bf16 on MPS can be unstable.
+- **Code-switching:** include code-mixed utterances; the warm start already knows
+  English, so the model mainly learns the *transitions*. Test with the mixed eval
+  sentences in the config.
+- **MPS memory:** keep `batch_size: 1`, use `grad_accum`; lower `max_audio_seconds`
+  or `lora.rank` if memory is tight.
 - **`torch.stft` on MPS** (precompute): if it errors, run step 3 with `--device cpu`.
-- **Sanity checks:** step 2 prints `[UNK]` count (should be ~0 on in-language text);
-  step 4's `speech` loss should fall steadily; for a smoke test set `max_steps`
-  small and `--limit` the features.
-- **Scaling up (Colab / cloud GPU):** use `configs/tamil_colab.yaml` (`device: cuda`,
-  mixed precision, longer schedule); increase data and `max_steps`, and optionally
-  set `lora.enabled: false` for a full fine-tune on a big GPU.
+- **Smoke test:** `--limit` the features + `MAX_STEPS=200`; just confirm `speech`
+  loss falls before a full run.
+- **Full fine-tune on a big GPU:** set `lora.enabled: false` (needs more memory).

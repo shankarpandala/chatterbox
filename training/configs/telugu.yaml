@@ -1,0 +1,73 @@
+# Telugu pilot — FULLY PARAMETRIZED config.
+#
+# ── Add the NEXT language ("1 by 1") ────────────────────────────────────────
+# Copy this file (e.g. marathi.yaml) and change ONLY these three things —
+# every path is derived from `language`, so nothing else needs editing:
+#   1. language        : te  -> new ISO code (must be in SUPPORTED_LANGUAGES)
+#   2. language_name   : Telugu -> display name
+#   3. eval_sentences  : a few sentences in the new language (pure + code-mixed)
+#
+# ── Mac vs Colab is controlled by ENV VARS (no file edits) ──────────────────
+# Defaults below target a Mac (MPS, fp32). Override per platform:
+#   Prove on Mac (smoke):   MAX_STEPS=200                 (uses mps + fp32)
+#   Scale on Colab T4:      DEVICE=cuda PRECISION=fp16 MAX_STEPS=40000 \
+#                           WORK_DIR=/content/drive/MyDrive/chatterbox_runs
+
+language: te
+language_name: Telugu
+
+base_repo: ResembleAI/chatterbox
+base_t3: t3_mtl23ls_v2.safetensors
+
+# ── Everything below is parametrized; you should not need to edit it ─────────
+device: ${oc.env:DEVICE,mps}            # mps (Mac) | cuda (Colab) | cpu
+precision: ${oc.env:PRECISION,fp32}     # fp32 (Mac) | fp16 (Colab T4) | bf16 (A100/L4)
+
+paths:
+  work_dir: ${oc.env:WORK_DIR,'./runs'}/${language}   # -> ./runs/te (or a Drive path on Colab)
+  manifest: ${paths.work_dir}/manifest.jsonl
+  tokenizer: ${paths.work_dir}/grapheme_mtl_merged_expanded_v1.json
+  features: ${paths.work_dir}/features
+  feature_index: ${paths.work_dir}/features/index.jsonl
+  checkpoints: ${paths.work_dir}/checkpoints
+  export: ${paths.work_dir}/export
+
+precompute:
+  reference: other_same_speaker
+
+train:
+  batch_size: 1                         # keep 1 (T3.forward has no attention mask)
+  grad_accum: 16                        # effective batch = batch_size * grad_accum
+  lr: 2.0e-4
+  weight_decay: 0.01
+  max_steps: ${oc.env:MAX_STEPS,20000}  # Mac smoke: MAX_STEPS=200 ; Colab: 40000
+  warmup_steps: 500
+  grad_clip: 1.0
+  save_every: 1000
+  log_every: 20
+  max_audio_seconds: 14
+  speech_loss_weight: 1.0
+  text_loss_weight: 0.1                 # auxiliary; set 0 to disable
+  seed: 1234
+  num_workers: 2
+  lora:
+    enabled: true                       # fits a 24 GB Mac and a T4; false = full fine-tune
+    rank: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  train_text_embeddings: true
+  train_text_head: true
+
+# The ONE language-specific thing to edit (besides language/language_name):
+eval_sentences:
+  - "నమస్కారం, ఈ రోజు ఎలా ఉన్నారు?"
+  - "నేను office కి వెళ్తున్నాను, evening meeting ఉంది."   # code-switched "Tenglish"
+  - "ఈ project ని రేపటిలోగా finish చేయాలి."
+
+upload:
+  repo_id: null                         # e.g. your-username/chatterbox-telugu (or pass --repo-id)
+  private: true
+  # Fine-tuned weights inherit your TRAINING-DATA licenses (many Indic corpora are
+  # research-only). Verify before publishing.
+  license: other

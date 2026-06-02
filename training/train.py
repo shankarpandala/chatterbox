@@ -10,7 +10,7 @@ Objective: autoregressive next-speech-token prediction. The speech input is
 ``[BOS] + tokens`` and the target is ``tokens + [EOS]`` so logits at position k
 predict token k (teacher forcing), exactly matching inference in T3.inference.
 
-    python -m training.train --config training/configs/tamil.yaml
+    python -m training.train --config training/configs/telugu.yaml
 """
 from __future__ import annotations
 
