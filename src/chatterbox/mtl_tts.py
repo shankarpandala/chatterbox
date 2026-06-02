@@ -52,6 +52,22 @@ SUPPORTED_LANGUAGES = {
   "sw": "Swahili",
   "tr": "Turkish",
   "zh": "Chinese",
+  # --- Indian languages ---
+  # "hi" (Hindi) ships in the released multilingual checkpoint. The codes below
+  # are enabled so the pipeline in ./training can add them one-by-one. Producing
+  # high quality for any of these requires loading its fine-tuned T3 checkpoint
+  # together with the matching extended tokenizer (see training/README.md).
+  "bn": "Bengali",
+  "ta": "Tamil",
+  "te": "Telugu",
+  "mr": "Marathi",
+  "gu": "Gujarati",
+  "kn": "Kannada",
+  "ml": "Malayalam",
+  "pa": "Punjabi",
+  "or": "Odia",
+  "as": "Assamese",
+  "ur": "Urdu",
 }
 
 
@@ -185,9 +201,11 @@ class ChatterboxMultilingualTTS:
         ckpt_dir,
         device,
         t3_model: str | None = None,
+        tokenizer_file: str | None = None,
     ) -> 'ChatterboxMultilingualTTS':
         ckpt_dir = Path(ckpt_dir)
         t3_model = _resolve_multilingual_t3_model(t3_model)
+        tokenizer_file = tokenizer_file or "grapheme_mtl_merged_expanded_v1.json"
 
         # Always load to CPU first for non-CUDA devices to handle CUDA-saved models
         if device in ["cpu", "mps"]:
@@ -195,13 +213,19 @@ class ChatterboxMultilingualTTS:
         else:
             map_location = None
 
+        # Load the tokenizer first so the T3 text embedding / head can be sized to
+        # match it. A tokenizer extended with extra scripts (e.g. for a new Indian
+        # language via ./training) reports a vocab size larger than the default 2454.
+        tokenizer = MTLTokenizer(str(ckpt_dir / tokenizer_file))
+        text_vocab_size = tokenizer.tokenizer.get_vocab_size()
+
         ve = VoiceEncoder()
         ve.load_state_dict(
             torch.load(ckpt_dir / "ve.pt", map_location=map_location, weights_only=True)
         )
         ve.to(device).eval()
 
-        t3 = T3(T3Config.multilingual())
+        t3 = T3(T3Config.multilingual(text_vocab_size))
         t3_state = load_safetensors(ckpt_dir / t3_model)
         if "model" in t3_state.keys():
             t3_state = t3_state["model"][0]
@@ -213,10 +237,6 @@ class ChatterboxMultilingualTTS:
             torch.load(ckpt_dir / "s3gen.pt", map_location=map_location, weights_only=True)
         )
         s3gen.to(device).eval()
-
-        tokenizer = MTLTokenizer(
-            str(ckpt_dir / "grapheme_mtl_merged_expanded_v1.json")
-        )
 
         conds = None
         if (builtin_voice := ckpt_dir / "conds.pt").exists():

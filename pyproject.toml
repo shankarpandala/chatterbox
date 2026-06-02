@@ -31,6 +31,16 @@ dependencies = [
     "omegaconf"
 ]
 
+[project.optional-dependencies]
+# Extras for the language fine-tuning pipeline in ./training (not needed for inference).
+training = [
+    "peft>=0.11.0",
+    "huggingface_hub>=0.23.0",
+    "datasets>=2.19.0",
+    "soundfile",
+    "indic-nlp-library",
+]
+
 [project.urls]
 Homepage = "https://github.com/resemble-ai/chatterbox"
 Repository = "https://github.com/resemble-ai/chatterbox"

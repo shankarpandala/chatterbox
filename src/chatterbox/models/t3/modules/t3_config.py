@@ -28,14 +28,21 @@ class T3Config:
     
     @property
     def is_multilingual(self):
-        return self.text_tokens_dict_size == 2454
+        return self.text_tokens_dict_size >= 2454
 
     @classmethod
     def english_only(cls):
         """Create configuration for English-only TTS model."""
         return cls(text_tokens_dict_size=704)
-    
-    @classmethod 
-    def multilingual(cls):
-        """Create configuration for multilingual TTS model."""
-        return cls(text_tokens_dict_size=2454)
+
+    @classmethod
+    def multilingual(cls, text_tokens_dict_size: int = 2454):
+        """Create configuration for the multilingual TTS model.
+
+        ``text_tokens_dict_size`` defaults to the 2454-token grapheme vocab of
+        the released checkpoint, but may be larger when the tokenizer has been
+        extended with additional scripts (e.g. when adding a new Indian
+        language via the ``training`` pipeline). Pass the extended tokenizer's
+        vocab size so the T3 text embedding and head are sized to match.
+        """
+        return cls(text_tokens_dict_size=text_tokens_dict_size)
