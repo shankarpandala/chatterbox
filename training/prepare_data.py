@@ -254,10 +254,6 @@ def main():
 
     cfg = load_config(args.config)
     manifest = Path(cfg.paths.manifest)
-    if manifest.exists() and not args.append:
-        raise SystemExit(
-            f"{manifest} already exists. Pass --append to add to it, or delete it to start fresh."
-        )
 
     if args.all:
         # Pull every source listed in the config into one combined manifest.
@@ -266,6 +262,13 @@ def main():
         sources = cfg.get("sources")
         if not sources:
             raise SystemExit("--all requires a `sources:` list in the config.")
+        # --all produces THE full manifest, so rebuild from scratch by default
+        # (re-running shouldn't duplicate rows). Use --append to add instead.
+        if manifest.exists() and not args.append:
+            print(f"[prepare_data] --all: rebuilding {manifest} from scratch")
+            manifest.unlink()
+        print(f"[prepare_data] --all: pulling {len(sources)} source(s) for "
+              f"'{cfg.language}' ({cfg.language_name}) — this language only")
         grand = 0
         for i, src_cfg in enumerate(sources):
             a = _source_namespace(OmegaConf.to_container(src_cfg, resolve=True))
@@ -280,6 +283,10 @@ def main():
 
     if not args.source_type:
         raise SystemExit("Pass --source-type <ljspeech|csv|hf|openslr>, or --all to use the config's `sources:`.")
+    if manifest.exists() and not args.append:
+        raise SystemExit(
+            f"{manifest} already exists. Pass --append to add to it, or delete it to start fresh."
+        )
 
     kept = _append_rows(manifest, _dispatch_rows(args, cfg), cfg.language)
     total = sum(1 for _ in open(manifest, encoding="utf-8"))
