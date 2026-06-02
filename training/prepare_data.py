@@ -2,7 +2,7 @@
 
 Reads one source at a time and appends rows to ``paths.manifest`` (JSONL), each:
 
-    {"audio_path": "/abs/clip.wav", "text": "...", "lang": "ta", "speaker": "spkA"}
+    {"audio_path": "/abs/clip.wav", "text": "...", "lang": "te", "speaker": "spkA"}
 
 Supported ``--source-type`` values:
 
@@ -12,12 +12,12 @@ Supported ``--source-type`` values:
   hf       : a HuggingFace `datasets` dataset (audio decoded to wav under work_dir)
 
 Run once per source (use --append for the 2nd, 3rd, ... source). Example mix for
-a Tamil pilot: IIT-M IndicTTS (ljspeech) + OpenSLR SLR65 (csv) + IndicVoices-R
-(hf) + IndicVoices conversational / MUCS code-switch (hf or ljspeech).
+a Telugu pilot: IIT-M IndicTTS (ljspeech) + OpenSLR SLR66 (csv) + IndicVoices-R
+(hf) + IndicVoices conversational code-switch (hf or ljspeech).
 
-    python -m training.prepare_data --config training/configs/tamil.yaml \
-        --source-type ljspeech --audio-dir /data/indictts/ta/wav \
-        --metadata /data/indictts/ta/txt.done.data --speaker indictts_f
+    python -m training.prepare_data --config training/configs/telugu.yaml \
+        --source-type ljspeech --audio-dir /data/indictts/te/wav \
+        --metadata /data/indictts/te/txt.done.data --speaker indictts_f
 """
 from __future__ import annotations
 

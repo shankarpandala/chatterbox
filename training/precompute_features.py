@@ -9,7 +9,7 @@ Runs the language-agnostic stack ONCE over the corpus and caches to disk:
 After this, train.py never touches audio, S3Gen, the VoiceEncoder or the
 S3Tokenizer, so only T3 (+ LoRA) needs to live in memory during training.
 
-    python -m training.precompute_features --config training/configs/tamil.yaml
+    python -m training.precompute_features --config training/configs/telugu.yaml
     # add --device cpu if torch.stft misbehaves on MPS
 """
 from __future__ import annotations

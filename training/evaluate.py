@@ -4,7 +4,7 @@ Loads the exported model dir, generates the (pure-script + code-switched) eval
 sentences, writes WAVs, and reports speaker similarity (VoiceEncoder cosine vs a
 reference voice). Optionally computes CER with an ASR model if you pass --asr.
 
-    python -m training.evaluate --config training/configs/tamil.yaml \
+    python -m training.evaluate --config training/configs/telugu.yaml \
         --ref reference_voice.wav
 """
 from __future__ import annotations
