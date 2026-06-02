@@ -92,6 +92,9 @@ IndicVoices-R). Pull **every** source into one combined manifest with a single c
 python -m training.prepare_data --config $CFG --all
 ```
 
+`--all` pulls only **this config's language** (Telugu here — never other languages) and
+**rebuilds the manifest fresh** each run (use `--append` to add to an existing one).
+
 Then run the rest of the pipeline unchanged — **training automatically uses the whole
 combined manifest** (precompute reads every row; train reads every cached feature). So
 "download from all sources" + "train on all of them" is just `--all` followed by the
