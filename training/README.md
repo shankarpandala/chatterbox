@@ -31,10 +31,31 @@ Two design choices make it run on a Mac:
 > GPU later — set `device: cuda`, raise `lora.rank`/data, and (optionally) switch
 > to a full fine-tune — to push toward native quality.
 
+## Platforms
+
+**Mac (Apple-Silicon / MPS) is the primary target — get it working here first.**
+**Google Colab (CUDA)** is for heavier/longer runs. Every step works on both; the
+only difference is the **config file** you pass:
+
+| Platform | Config | Notes |
+|---|---|---|
+| Mac (MPS) | `training/configs/tamil.yaml` | `device: mps`, `precision: fp32` |
+| Colab (CUDA) | `training/configs/tamil_colab.yaml` | `device: cuda`, `precision: fp16` (bf16 on A100/L4), longer schedule |
+
 ## Install
 
+**Mac:**
 ```bash
 pip install -e ".[training]"     # adds peft, datasets, soundfile, indic-nlp-library, huggingface_hub
+```
+
+**Google Colab** (run in a cell; `!` shells out):
+```python
+!git clone https://github.com/shankarpandala/chatterbox.git
+%cd chatterbox
+!pip install -e ".[training]"
+# Colab ships a CUDA torch; the install may re-pin torch. If CUDA breaks afterwards,
+# reinstall a CUDA build, e.g.:  !pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 ```
 
 ## Datasets (open, for Indian-language TTS)
@@ -58,8 +79,11 @@ Tamil pilot suggestion: IIT-M IndicTTS Tamil + OpenSLR SLR65 + IndicVoices-R Tam
 
 ## Pipeline (run from the repo root)
 
+The commands are identical on both platforms — only `CFG` changes:
+
 ```bash
-CFG=training/configs/tamil.yaml
+CFG=training/configs/tamil.yaml         # Mac (MPS)
+# CFG=training/configs/tamil_colab.yaml # Google Colab (CUDA)
 
 # 1) Build the manifest (run once per source, --append for the 2nd, 3rd, …)
 python -m training.prepare_data --config $CFG --source-type ljspeech \
@@ -92,8 +116,39 @@ import torchaudio as ta
 
 model = ChatterboxMultilingualTTS.from_local("runs/tamil/export", device="mps", t3_model="t3_mtl_ta.safetensors")
 wav = model.generate("நான் office போறேன், meeting இருக்கு.", language_id="ta", audio_prompt_path="reference_voice.wav")
-ta.save("out.wav", wav, model.sr)
+ta.save("out.wav", wav, model.sr)   # use device="cuda" on Colab
 ```
+
+## Google Colab (CUDA) quickstart
+
+Runtime → Change runtime type → **GPU**. Then, in cells:
+
+```python
+# 1) Setup
+!nvidia-smi -L                                  # check your GPU (T4 -> fp16, A100/L4 -> bf16)
+!git clone https://github.com/shankarpandala/chatterbox.git
+%cd chatterbox
+!pip install -e ".[training]"
+
+# 2) Persist outputs across disconnects (recommended) + HF auth
+from google.colab import drive; drive.mount('/content/drive')
+from huggingface_hub import login; login()      # paste a token (or set HF_TOKEN)
+# Edit training/configs/tamil_colab.yaml -> paths.work_dir: /content/drive/MyDrive/chatterbox_runs/tamil
+```
+```bash
+# 3) Same pipeline, Colab config
+CFG=training/configs/tamil_colab.yaml
+python -m training.prepare_data        --config $CFG --source-type hf --hf-dataset ai4bharat/indicvoices_r --hf-config ta --hf-split train --text-col text --audio-col audio --speaker-col speaker
+python -m training.extend_tokenizer    --config $CFG
+python -m training.precompute_features --config $CFG          # CUDA handles torch.stft fine
+python -m training.train               --config $CFG
+python -m training.merge_and_export    --config $CFG
+python -m training.evaluate            --config $CFG --ref reference_voice.wav
+```
+
+On an A100/L4, switch `precision: bf16` in the Colab config for better stability.
+The recommended workflow: **prove the loop on your Mac first** (a few clips, small
+`max_steps`), then run the full-scale training on Colab.
 
 ## Upload to HuggingFace
 
@@ -128,5 +183,6 @@ cp training/configs/tamil.yaml training/configs/telugu.yaml   # edit language: t
 - **Sanity checks:** step 2 prints `[UNK]` count (should be ~0 on in-language text);
   step 4's `speech` loss should fall steadily; for a smoke test set `max_steps`
   small and `--limit` the features.
-- **Scaling up (cloud GPU):** set `device: cuda`, increase data and `max_steps`,
-  optionally `lora.enabled: false` for a full fine-tune.
+- **Scaling up (Colab / cloud GPU):** use `configs/tamil_colab.yaml` (`device: cuda`,
+  mixed precision, longer schedule); increase data and `max_steps`, and optionally
+  set `lora.enabled: false` for a full fine-tune on a big GPU.

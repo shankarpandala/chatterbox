@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
@@ -146,6 +147,16 @@ def main():
     if int(cfg.train.batch_size) != 1:
         raise SystemExit("train.batch_size must be 1 (see training/dataset.py). Use grad_accum for a larger effective batch.")
 
+    # Mixed precision: fp32 everywhere on Mac/MPS (robust); on CUDA (Colab) use
+    # bf16 (A100/L4) or fp16 (T4, needs a GradScaler) for speed/memory.
+    precision = str(cfg.get("precision", "fp32")).lower()
+    use_amp = device == "cuda" and precision in ("bf16", "fp16")
+    amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=(device == "cuda" and precision == "fp16"))
+    if precision in ("bf16", "fp16") and device != "cuda":
+        print(f"[train] precision={precision} only applies on CUDA; running fp32 on {device}.")
+    print(f"[train] device={device} | precision={precision if use_amp else 'fp32'}")
+
     base_dir = download_base(cfg)
     _, vocab_size = load_tokenizer(cfg.paths.tokenizer)
     t3, use_lora = setup_model(cfg, base_dir, vocab_size, device)
@@ -168,13 +179,15 @@ def main():
     opt.zero_grad()
     while not done:
         for sample in dl:
-            loss, ls, lt = compute_loss(t3, sample, device, w_speech, w_text)
-            (loss / grad_accum).backward()
+            with (torch.autocast("cuda", dtype=amp_dtype) if use_amp else nullcontext()):
+                loss, ls, lt = compute_loss(t3, sample, device, w_speech, w_text)
+            scaler.scale(loss / grad_accum).backward()
             run_speech += float(ls); run_text += float(lt); micro += 1
 
             if micro % grad_accum == 0:
+                scaler.unscale_(opt)
                 torch.nn.utils.clip_grad_norm_(trainable, float(cfg.train.grad_clip))
-                opt.step(); sched.step(); opt.zero_grad()
+                scaler.step(opt); scaler.update(); sched.step(); opt.zero_grad()
                 step += 1
 
                 if step % int(cfg.train.log_every) == 0:
