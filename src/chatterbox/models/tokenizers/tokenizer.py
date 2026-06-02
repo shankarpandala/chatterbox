@@ -237,19 +237,61 @@ class ChineseCangjieConverter:
 def add_russian_stress(text: str) -> str:
     """Russian text normalization: adds stress marks to Russian text."""
     global _russian_stresser
-    
+
     try:
         if _russian_stresser is None:
             from russian_text_stresser.text_stresser import RussianTextStresser
             _russian_stresser = RussianTextStresser()
-        
+
         return _russian_stresser.stress_text(text)
-        
+
     except ImportError:
         logger.warning("russian_text_stresser not available - Russian stress labeling skipped")
         return text
     except Exception as e:
         logger.warning(f"Russian stress labeling failed: {e}")
+        return text
+
+
+# Indian languages handled by the grapheme tokenizer. Indic scripts are phonetic
+# abugidas, so (unlike zh/ja) no grapheme->phoneme step is needed; we only apply
+# light Unicode canonicalization. Latin/English runs in code-switched ("Hinglish"
+# / "Tanglish") text are left untouched so the model keeps its English ability.
+INDIC_LANGS = {
+    "hi", "bn", "ta", "te", "mr", "gu", "kn", "ml", "pa", "or", "as", "ur",
+    "ne", "sa", "kok", "mai", "sd",
+}
+_indic_normalizer_factory = None
+_indic_normalizers = {}
+
+
+def indic_normalize(text: str, language_id: str) -> str:
+    """Optional Indic-script normalization via indic-nlp-library.
+
+    Canonicalizes script-specific variants (nukta composition, chandrabindu,
+    digit handling, etc.). No-op if the optional dependency is missing or the
+    language is unsupported, so it is always safe to call. Operates only on
+    Indic codepoints, leaving embedded Latin/English text unchanged.
+    """
+    global _indic_normalizer_factory
+    try:
+        if language_id in _indic_normalizers:
+            normalizer = _indic_normalizers[language_id]
+        else:
+            if _indic_normalizer_factory is None:
+                from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
+                _indic_normalizer_factory = IndicNormalizerFactory()
+            normalizer = _indic_normalizer_factory.get_normalizer(language_id)
+            _indic_normalizers[language_id] = normalizer
+        if normalizer is None:  # dependency previously unavailable
+            return text
+        return normalizer.normalize(text)
+    except ImportError:
+        logger.warning("indic-nlp-library not available - Indic normalization skipped")
+        _indic_normalizers[language_id] = None
+        return text
+    except Exception as e:
+        logger.warning(f"Indic normalization failed for '{language_id}': {e}")
         return text
 
 
@@ -296,7 +338,9 @@ class MTLTokenizer:
             txt = korean_normalize(txt)
         elif language_id == 'ru':
             txt = add_russian_stress(txt)
-        
+        elif language_id in INDIC_LANGS:
+            txt = indic_normalize(txt, language_id)
+
         # Prepend language token
         if language_id:
             txt = f"[{language_id.lower()}]{txt}"

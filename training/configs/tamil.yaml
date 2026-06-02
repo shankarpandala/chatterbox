@@ -1,0 +1,72 @@
+# Pilot config: fine-tune Chatterbox-Multilingual on a new Indian language.
+#
+# The pipeline is language-parametric: to add the NEXT language "1 by 1", copy
+# this file (e.g. configs/telugu.yaml), change `language` / `language_name` /
+# paths / eval_sentences, point at that language's data, and re-run the same
+# steps. Nothing else changes.
+
+language: ta                 # ISO code; must match the [tag] the tokenizer prepends
+language_name: Tamil
+
+# ---- Base model to warm-start from (auto-downloaded from HF if absent) -------
+base_repo: ResembleAI/chatterbox
+base_t3: t3_mtl23ls_v2.safetensors    # or t3_mtl23ls_v3.safetensors
+
+# ---- Paths (created / consumed by the pipeline) ------------------------------
+paths:
+  work_dir: ./runs/tamil
+  manifest: ./runs/tamil/manifest.jsonl                          # <- prepare_data.py
+  tokenizer: ./runs/tamil/grapheme_mtl_merged_expanded_v1.json   # <- extend_tokenizer.py
+  features: ./runs/tamil/features                                # <- precompute_features.py
+  feature_index: ./runs/tamil/features/index.jsonl              # <- precompute_features.py
+  checkpoints: ./runs/tamil/checkpoints                          # <- train.py
+  export: ./runs/tamil/export                                    # <- merge_and_export.py
+
+# ---- Device / precision ------------------------------------------------------
+device: mps                  # mps | cuda | cpu
+precision: fp32              # fp32 is the robust choice on Apple-Silicon/MPS
+
+# ---- Feature pre-computation -------------------------------------------------
+precompute:
+  reference: other_same_speaker   # other_same_speaker | self  (cond-prompt source)
+
+# ---- Training ----------------------------------------------------------------
+train:
+  batch_size: 1              # keep 1 on a 24 GB Mac (the custom T3 forward has no
+                             # attention mask, so >1 is NOT supported here)
+  grad_accum: 16             # effective batch = batch_size * grad_accum
+  lr: 2.0e-4
+  weight_decay: 0.01
+  max_steps: 20000           # optimizer steps (after accumulation)
+  warmup_steps: 500
+  grad_clip: 1.0
+  save_every: 1000
+  log_every: 20
+  max_audio_seconds: 14      # cap clip length to bound memory / sequence length
+  speech_loss_weight: 1.0
+  text_loss_weight: 0.1      # auxiliary next-text-token loss; set 0 to disable
+  seed: 1234
+  num_workers: 2
+  lora:
+    enabled: true            # LoRA fits in 24 GB; set false for a full fine-tune
+    rank: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  # Small, language-critical params trained even with LoRA on:
+  train_text_embeddings: true
+  train_text_head: true
+
+# ---- Evaluation prompts (mix pure-script and code-switched) ------------------
+eval_sentences:
+  - "வணக்கம், இன்று எப்படி இருக்கிறீர்கள்?"
+  - "நான் office போறேன், evening meeting இருக்கு."          # code-switched "Tanglish"
+  - "இந்த project-ஐ நாளைக்கு finish பண்ண வேண்டும்."
+
+# ---- HuggingFace upload (used by push_to_hub.py) -----------------------------
+upload:
+  repo_id: null              # e.g. "your-username/chatterbox-tamil"; set before uploading
+  private: true
+  # IMPORTANT: the fine-tuned weights inherit obligations from your TRAINING DATA
+  # licenses (many Indic TTS corpora are research-only). Verify before publishing.
+  license: other
