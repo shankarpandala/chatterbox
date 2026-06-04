@@ -179,5 +179,9 @@ If you find this model useful, please consider citing.
   note         = {GitHub repository}
 }
 ```
+
+> **Fine-tuning on open corpora?** This fork's Indian-language fine-tuning pipeline
+> (`training/`) trains on FLEURS, OpenSLR SLR66, and IndicVoices-R. Their licenses and
+> the citations you must include when publishing are in [`CITATIONS.md`](./CITATIONS.md).
 ## Disclaimer
 Don't use this model to do bad things. Prompts are sourced from freely available data on the internet.

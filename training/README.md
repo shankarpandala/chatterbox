@@ -70,18 +70,26 @@ pip install -e ".[training]"     # peft, datasets, soundfile, indic-nlp-library,
 ## Datasets (open, for Telugu TTS)
 
 **Ungated — work out of the box** (no login/approval):
-| Dataset | How | Size / quality |
-|---|---|---|
-| `google/fleurs` (`te_in`) | `hf` loader | ~5 h, 16 kHz, read speech — **smoke test** |
-| OpenSLR **SLR66** (Telugu) | `openslr` loader (`--slr-id 66`) | ~5 h, 16 kHz, crowdsourced, male+female |
-| `ai4bharat/indicvoices_r` (`Telugu`) | `hf` loader | ~100 h, 48 kHz, multi-speaker — **scale** (large ~86 GB; subset/Colab) |
+| Dataset | How | Size / quality | License |
+|---|---|---|---|
+| `google/fleurs` (`te_in`) | `hf` loader | ~5 h, 16 kHz, read speech — **smoke test** | CC-BY-4.0 |
+| OpenSLR **SLR66** (Telugu) | `openslr` loader (`--slr-id 66`) | ~5 h, 16 kHz, crowdsourced, male+female | CC-BY-**SA**-4.0 |
+
+**Gated — request access on HF, then set `HF_TOKEN`** (one-time approval per account):
+| Dataset | How | Size / quality | License |
+|---|---|---|---|
+| `ai4bharat/indicvoices_r` (`Telugu`) | `hf` loader | ~100 h, 48 kHz, multi-speaker — **scale** (large ~86 GB; subset/Colab) | CC-BY-4.0 |
 
 **Gated / manual** (need login or a license request; for higher quality later):
 - `SPRINGLab/IndicTTS_Telugu` — IIT-M studio, 2 speakers, ~8.7 h, 48 kHz (accept license on HF).
 - **IIT-Madras IndicTTS** full corpus — research request; use the `ljspeech` loader once downloaded.
 - Mozilla **Common Voice** (te) — moved to the Mozilla Data Collective (login required).
 
-> Fine-tuned weights inherit their **training-data** license — verify before publishing.
+> **Attribution & licensing:** every source above must be cited if you publish — see
+> [`CITATIONS.md`](../CITATIONS.md) for the required BibTeX and license terms. Fine-tuned
+> weights inherit their **training-data** license: SLR66 is **CC-BY-SA** (ShareAlike), so
+> a model trained on it must be released under a compatible license — drop it from
+> `sources:` to avoid that. Verify before publishing.
 
 ## Train on ALL sources at once
 
@@ -150,8 +158,8 @@ export DEVICE=cuda PRECISION=fp16 MAX_STEPS=40000 \
        WORK_DIR=/content/drive/MyDrive/chatterbox_runs
 CFG=training/configs/telugu.yaml
 
-# ai4bharat/indicvoices_r is ungated, ~100h Telugu @ 48 kHz (large ~86 GB) — note the
-# config is "Telugu" (capitalized) and text/speaker columns are text/speaker_id.
+# ai4bharat/indicvoices_r is GATED (request access on HF + set HF_TOKEN), ~100h Telugu
+# @ 48 kHz (large ~86 GB) — config is "Telugu" (capitalized), cols text/speaker_id.
 # Subset for a first run by slicing the split, e.g. --hf-split "train[:5000]".
 python -m training.prepare_data        --config $CFG --source-type hf \
     --hf-dataset ai4bharat/indicvoices_r --hf-config Telugu --hf-split "train[:5000]" \

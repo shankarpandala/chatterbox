@@ -98,12 +98,46 @@ def _from_csv(args):
             yield audio, row[args.text_col], speaker
 
 
-def _from_hf(args, cfg):
+def _iter_hf_dataset(ds, args, cache_dir):
+    """Yield (audio_path, text, speaker) from a loaded `datasets` dataset.
+
+    `datasets` >= 4 decodes audio through `torchcodec` (a heavy native dep that
+    needs a matching FFmpeg/torch build, painful on Mac/MPS). We don't need its
+    decoder: turn it off and decode the raw bytes ourselves with `soundfile`
+    (already a dependency), which handles wav/flac/ogg out of the box. Decoded
+    clips are cached as wav under `cache_dir` so later steps read plain files.
+    """
+    import io
+
     import soundfile as sf
+    from datasets import Audio
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    if isinstance(ds.features.get(args.audio_col), Audio):
+        ds = ds.cast_column(args.audio_col, Audio(decode=False))
+
+    for i, ex in enumerate(ds):
+        audio = ex[args.audio_col]
+        wav_path = cache_dir / f"{i:08d}.wav"
+        if isinstance(audio, dict) and audio.get("array") is not None:  # already decoded
+            if not wav_path.exists():
+                sf.write(str(wav_path), audio["array"], audio["sampling_rate"])
+            audio_path = str(wav_path)
+        elif isinstance(audio, dict) and audio.get("bytes") is not None:  # raw encoded bytes
+            if not wav_path.exists():
+                data, sr = sf.read(io.BytesIO(audio["bytes"]))
+                sf.write(str(wav_path), data, sr)
+            audio_path = str(wav_path)
+        else:  # a path-like (decode disabled and only a path is available)
+            audio_path = audio["path"] if isinstance(audio, dict) else str(audio)
+        speaker = str(ex.get(args.speaker_col, args.speaker)) if args.speaker_col else args.speaker
+        yield audio_path, ex[args.text_col], speaker
+
+
+def _from_hf(args, cfg):
     from datasets import load_dataset
 
     cache_dir = Path(cfg.paths.work_dir) / "audio_cache" / (args.hf_config or "default")
-    cache_dir.mkdir(parents=True, exist_ok=True)
     try:
         ds = load_dataset(args.hf_dataset, args.hf_config, split=args.hf_split)
     except Exception as e:
@@ -113,17 +147,30 @@ def _from_hf(args, cfg):
             ds = load_dataset(args.hf_dataset, args.hf_config, split=args.hf_split, trust_remote_code=True)
         else:
             raise
-    for i, ex in enumerate(ds):
-        audio = ex[args.audio_col]
-        if isinstance(audio, dict) and "array" in audio:  # decoded audio
-            wav_path = cache_dir / f"{i:08d}.wav"
-            if not wav_path.exists():
-                sf.write(str(wav_path), audio["array"], audio["sampling_rate"])
-            audio_path = str(wav_path)
-        else:  # a path-like
-            audio_path = audio["path"] if isinstance(audio, dict) else str(audio)
-        speaker = str(ex.get(args.speaker_col, args.speaker)) if args.speaker_col else args.speaker
-        yield audio_path, ex[args.text_col], speaker
+    yield from _iter_hf_dataset(ds, args, cache_dir)
+
+
+def _from_parquet(args, cfg):
+    """Build rows straight from local parquet shard(s) via a glob.
+
+    Lets you train on a PARTIALLY-downloaded HF parquet dataset: the normal
+    loader refuses to resolve a split until every shard is present, but the
+    shards already on disk are valid parquet, so we read them directly. Point
+    ``--parquet-glob`` at the cached shards, e.g. (one line):
+
+        ~/.cache/huggingface/hub/datasets--ai4bharat--indicvoices_r/snapshots/*/Telugu/train-*.parquet
+    """
+    import glob
+
+    from datasets import load_dataset
+
+    files = sorted(glob.glob(os.path.expanduser(args.parquet_glob)))
+    if not files:
+        raise SystemExit(f"parquet source: no files match {args.parquet_glob!r}")
+    print(f"[prepare_data] parquet: {len(files)} shard(s) matched")
+    cache_dir = Path(cfg.paths.work_dir) / "audio_cache" / (args.cache_name or "parquet")
+    ds = load_dataset("parquet", data_files=files, split="train")
+    yield from _iter_hf_dataset(ds, args, cache_dir)
 
 
 # OpenSLR crowdsourced high-quality Indic sets (ungated, CC-BY-SA-4.0). Each entry:
@@ -190,7 +237,14 @@ def _from_openslr(args, cfg):
                 fid, text = cols[0].strip(), cols[1].strip()
                 wav = wavs.get(fid) or wavs.get(Path(fid).stem)
                 if wav is not None:
-                    yield str(wav), text, speaker
+                    # The coarse label (e.g. slr66_f) collapses ~24 real speakers
+                    # into one id, which breaks `other_same_speaker` reference
+                    # selection (it would prompt on a DIFFERENT physical voice).
+                    # The OpenSLR FileID encodes the real speaker, e.g.
+                    # tef_01033_<line> -> "tef_01033"; fall back to the label.
+                    parts = Path(fid).stem.split("_")
+                    real_spk = "_".join(parts[:2]) if len(parts) >= 2 else speaker
+                    yield str(wav), text, real_spk
 
 
 def _dispatch_rows(a, cfg):
@@ -207,6 +261,9 @@ def _dispatch_rows(a, cfg):
     if a.source_type == "hf":
         assert a.hf_dataset, "hf source needs hf_dataset"
         return _from_hf(a, cfg)
+    if a.source_type == "parquet":
+        assert a.parquet_glob, "parquet source needs parquet_glob"
+        return _from_parquet(a, cfg)
     raise SystemExit(f"Unknown source type: {a.source_type!r}")
 
 
@@ -220,6 +277,7 @@ def _source_namespace(src: dict):
         source_type=None, speaker="spk0", audio_dir=None, metadata=None, ext=".wav",
         sep="|", csv=None, audio_col="audio", text_col="text", speaker_col=None,
         hf_dataset=None, hf_config=None, hf_split="train", slr_id=None,
+        parquet_glob=None, cache_name=None,
     )
     base.update(d)
     return types.SimpleNamespace(**base)
@@ -228,7 +286,7 @@ def _source_namespace(src: dict):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", required=True)
-    p.add_argument("--source-type", default=None, choices=["ljspeech", "csv", "hf", "openslr"],
+    p.add_argument("--source-type", default=None, choices=["ljspeech", "csv", "hf", "openslr", "parquet"],
                    help="single source; omit and use --all to pull every source in the config")
     p.add_argument("--all", action="store_true",
                    help="download EVERY source listed under `sources:` in the config into one manifest")
@@ -250,6 +308,11 @@ def main():
     p.add_argument("--hf-split", default="train")
     # openslr
     p.add_argument("--slr-id", type=int, default=None, help="OpenSLR set id, e.g. 66 (Telugu)")
+    # parquet (local shards, e.g. a partially-downloaded HF parquet dataset)
+    p.add_argument("--parquet-glob", default=None,
+                   help="glob for local parquet shards, e.g. '~/.cache/huggingface/hub/"
+                        "datasets--ai4bharat--indicvoices_r/snapshots/*/Telugu/train-*.parquet'")
+    p.add_argument("--cache-name", default=None, help="audio_cache subdir name for parquet source")
     args = p.parse_args()
 
     cfg = load_config(args.config)
@@ -270,15 +333,30 @@ def main():
         print(f"[prepare_data] --all: pulling {len(sources)} source(s) for "
               f"'{cfg.language}' ({cfg.language_name}) — this language only")
         grand = 0
+        failed = []  # (label, reason) for sources we skipped
         for i, src_cfg in enumerate(sources):
             a = _source_namespace(OmegaConf.to_container(src_cfg, resolve=True))
             label = a.hf_dataset or (f"SLR{a.slr_id}" if a.slr_id else a.source_type)
             print(f"[prepare_data] source {i + 1}/{len(sources)}: {a.source_type} ({label})")
-            kept = _append_rows(manifest, _dispatch_rows(a, cfg), cfg.language)
+            # `--all` aggregates independent public corpora; any one may be gated,
+            # offline, or rate-limited at run time. Don't let a single unreachable
+            # source throw away the rows already gathered — skip it and carry on.
+            try:
+                kept = _append_rows(manifest, _dispatch_rows(a, cfg), cfg.language)
+            except Exception as e:  # noqa: BLE001 - report and continue
+                failed.append((label, str(e).splitlines()[0]))
+                print(f"[prepare_data]   !! skipped {label}: {failed[-1][1]}")
+                continue
             grand += kept
             print(f"[prepare_data]   +{kept} utterances")
-        total = sum(1 for _ in open(manifest, encoding="utf-8"))
+        total = sum(1 for _ in open(manifest, encoding="utf-8")) if manifest.exists() else 0
         print(f"[prepare_data] ALL sources done: added {grand}; manifest now {total} rows -> {manifest}")
+        if failed:
+            print(f"[prepare_data] {len(failed)}/{len(sources)} source(s) skipped:")
+            for label, reason in failed:
+                print(f"[prepare_data]   - {label}: {reason}")
+            if grand == 0:
+                raise SystemExit("[prepare_data] no sources succeeded — see errors above.")
         return
 
     if not args.source_type:

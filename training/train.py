@@ -196,6 +196,14 @@ def main():
                     print(f"[train] step {step}/{max_steps} | speech {run_speech/n:.4f} | "
                           f"text {run_text/n:.4f} | lr {sched.get_last_lr()[0]:.2e} | {n/dt:.1f} utt/s")
                     run_speech, run_text, t0 = 0.0, 0.0, time.time()
+                    # Release the allocator's unused cached blocks periodically so
+                    # the MPS high-water mark doesn't creep into swap over a long
+                    # run. Every log_every steps (NOT every step — a per-step MPS
+                    # sync stalls badly under memory pressure).
+                    if device == "mps":
+                        torch.mps.empty_cache()
+                    elif device == "cuda":
+                        torch.cuda.empty_cache()
 
                 if step % int(cfg.train.save_every) == 0:
                     save_checkpoint(t3, cfg, use_lora, step, vocab_size)

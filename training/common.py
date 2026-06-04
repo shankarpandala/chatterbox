@@ -135,6 +135,15 @@ def build_warmstart_t3(base_dir: Path, base_t3: str, vocab_size: int, device: st
             new_t = model_sd[k].clone()
             slices = tuple(slice(0, min(a, b)) for a, b in zip(new_t.shape, v.shape))
             new_t[slices] = v[slices]
+            # The NEW (non-overlapping) text-embedding rows otherwise keep
+            # nn.Embedding's default N(0,1) init — ~65x larger than the
+            # pretrained rows (std ~0.015). Feeding ~66x-oversized vectors into
+            # the RMSNorm backbone makes a short fine-tune spend its budget
+            # renormalizing instead of learning the new tokens, so re-scale the
+            # new rows to the pretrained embedding's std (mean already ~0).
+            if k.endswith("text_emb.weight") and new_t.shape[0] > v.shape[0]:
+                with torch.no_grad():
+                    new_t[v.shape[0]:].normal_(0.0, float(v.std()))
             to_load[k] = new_t
             resized.append((k, tuple(v.shape), tuple(model_sd[k].shape)))
 

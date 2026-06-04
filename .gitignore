@@ -46,3 +46,16 @@ checkpoints/
 
 # Ignore generated sample .wav files
 **/*.wav
+
+# Local secrets / env (HF_TOKEN etc.) — never commit
+.env
+.env.*
+!.env.example
+
+# Training run artifacts (WORK_DIR default ./runs) — multi-GB, fully regenerable:
+# downloaded corpora, audio caches, manifests, features, checkpoints, exports, logs.
+runs/
+# Base-model snapshot cache if it lands in the repo
+models--*/
+# spaCy/pkuseg model download triggered by precompute
+.pkuseg/

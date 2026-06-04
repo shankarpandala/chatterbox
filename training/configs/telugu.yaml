@@ -38,8 +38,9 @@ precompute:
 # All open Telugu sources, pulled together by:  prepare_data --config <cfg> --all
 # Each entry maps to one prepare_data source loader. When adding a NEW language,
 # update this list (different ISO ids: fleurs ta_in, OpenSLR 65, IndicVoices-R Tamil, …).
-# All three below are UNGATED. IndicVoices-R is large (~86 GB) — the split slice keeps
-# the Mac run sane; raise/remove `[:5000]` on Colab for the full set.
+# FLEURS + SLR66 are ungated; IndicVoices-R is GATED (request access on HF, then set
+# HF_TOKEN) and large (~86 GB) — the split slice keeps the Mac run sane; raise/remove
+# `[:5000]` on Colab for the full set. Licenses + required citations: see CITATIONS.md.
 sources:
   - type: hf            # FLEURS Telugu — ~5h read speech, 16 kHz
     hf_dataset: google/fleurs
