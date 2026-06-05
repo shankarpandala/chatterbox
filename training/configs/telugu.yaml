@@ -28,7 +28,7 @@ paths:
   manifest: ${paths.work_dir}/manifest.jsonl
   tokenizer: ${paths.work_dir}/grapheme_mtl_merged_expanded_v1.json
   features: ${paths.work_dir}/features
-  feature_index: ${paths.work_dir}/features/index.jsonl
+  feature_index: ${paths.work_dir}/features/index.jsonl  # SLR66 (CC-BY-SA) purged from this index + manifest + disk; mix is CC-BY-4.0 (FLEURS + IndicVoices-R)
   checkpoints: ${paths.work_dir}/checkpoints
   export: ${paths.work_dir}/export
 
@@ -49,8 +49,10 @@ sources:
     text_col: transcription
     audio_col: audio
     speaker: fleurs
-  - type: openslr       # OpenSLR SLR66 Telugu — crowdsourced, male+female
-    slr_id: 66
+  # OpenSLR SLR66 removed on purpose: it is CC-BY-SA-4.0 (ShareAlike), which would
+  # force the published model under a viral ShareAlike license. Dropping it keeps the
+  # training mix at CC-BY-4.0 (FLEURS + IndicVoices-R) so the release can be plain
+  # CC-BY-4.0. Re-add the `openslr / slr_id: 66` block only if you accept ShareAlike.
   - type: hf            # IndicVoices-R Telugu — large, 48 kHz, multi-speaker
     hf_dataset: ai4bharat/indicvoices_r
     hf_config: Telugu
@@ -68,7 +70,7 @@ train:
   warmup_steps: 500
   grad_clip: 1.0
   save_every: 1000
-  log_every: 20
+  log_every: 5            # finer feedback during MPS warm-up (step 5 ≈ 80 passes)
   max_audio_seconds: 14
   speech_loss_weight: 1.0
   text_loss_weight: 0.1                 # auxiliary; set 0 to disable
@@ -90,8 +92,7 @@ eval_sentences:
   - "ఈ project ని రేపటిలోగా finish చేయాలి."
 
 upload:
-  repo_id: null                         # e.g. your-username/chatterbox-telugu (or pass --repo-id)
-  private: true
-  # Fine-tuned weights inherit your TRAINING-DATA licenses (many Indic corpora are
-  # research-only). Verify before publishing.
-  license: other
+  repo_id: shankarpandala/chatterbox-telugu
+  private: false                        # PUBLIC: SLR66 (CC-BY-SA) was purged; training mix is CC-BY-4.0
+  # Training mix is FLEURS + IndicVoices-R, both CC-BY-4.0 → model released CC-BY-4.0
+  license: cc-by-4.0
