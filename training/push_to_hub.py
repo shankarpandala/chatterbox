@@ -43,6 +43,17 @@ def main():
         raise SystemExit("No HF token. Run `huggingface-cli login` or set HF_TOKEN.")
 
     private = bool(args.private or cfg.upload.private)
+    # The export dir can accumulate HF-cache cruft (a `models--*` snapshot dir, `.locks/`,
+    # `CACHEDIR.TAG`) and generated demo audio (`samples/`). Upload ONLY the model itself.
+    # fnmatch `*` crosses `/`, so `models--*` covers the whole nested cache tree.
+    ignore_patterns = [
+        "samples*",        # generated demo WAVs
+        "models--*",       # huggingface_hub cache snapshot dir
+        ".locks*",         # cache lock dir
+        "*.lock",
+        "CACHEDIR.TAG",    # cache-dir marker
+        ".cache*",
+    ]
     api = HfApi(token=token)
     api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
     print(f"[push] uploading {model_dir} -> https://huggingface.co/{repo_id} (private={private})")
@@ -51,6 +62,7 @@ def main():
         repo_id=repo_id,
         repo_type="model",
         commit_message=f"Add Chatterbox {cfg.language_name} ({cfg.language}) fine-tune",
+        ignore_patterns=ignore_patterns,
     )
     print(f"[push] done -> https://huggingface.co/{repo_id}")
 
